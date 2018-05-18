@@ -152,6 +152,17 @@ class GeoJSONWorkerSource extends VectorTileWorkerSource {
         const params = this._pendingLoadDataParams;
         delete this._pendingCallback;
         delete this._pendingLoadDataParams;
+
+        const marks = {};
+        const url = params && params.request && params.request.url;
+        const collectResourceTiming = params && params.request && params.request.collectResourceTiming;
+        if (url && collectResourceTiming) {
+            marks.start = [url, '#start'].join('#');
+            marks.end = [url, '#end'].join('#');
+            marks.measure = url.toString();
+            perf.mark(marks.start);
+        }
+
         this.loadGeoJSON(params, (err, data) => {
             if (err || !data) {
                 return callback(err);
@@ -172,13 +183,25 @@ class GeoJSONWorkerSource extends VectorTileWorkerSource {
 
                 const result = {};
                 if (params.request && params.request.collectResourceTiming) {
-                    const resourceTimingData = perf.getEntriesByName(params.request.url);
+                    if (params.request && params.request.collectResourceTiming)
+                        perf.mark(marks.end);
+                    let resourceTimingData = perf.getEntriesByName(params.request.url);
+                    // fallback if web worker implementation of perf.getEntriesByName returns empty
+                    if (marks.start && (resourceTimingData.length === 0)) {
+                        perf.measure(marks.measure, marks.start, marks.end);
+                        resourceTimingData = perf.getEntriesByName(marks.measure);
+                        // cleanup
+                        perf.clearMarks(marks.start);
+                        perf.clearMarks(marks.end);
+                        perf.clearMeasures(marks.measure);
+                    }
                     // it's necessary to eval the result of getEntriesByName() here via parse/stringify
                     // late evaluation in the main thread causes TypeError: illegal invocation
                     if (resourceTimingData) {
                         result.resourceTiming = {};
                         result.resourceTiming[params.source] = JSON.parse(JSON.stringify(resourceTimingData));
                     }
+
                 }
                 callback(null, result);
             }
